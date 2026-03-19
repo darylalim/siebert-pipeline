@@ -1,5 +1,5 @@
 [project]
-name = "text-classification-pipeline"
+name = "siebert-pipeline"
 version = "0.4.0"
 description = "Streamlit app for classifying text sentiment using SiEBERT"
 requires-python = ">=3.12"
