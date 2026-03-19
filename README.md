@@ -35,3 +35,23 @@ uv run streamlit run streamlit_app.py
 ```bash
 uv run pytest
 ```
+
+## Citation
+
+If you use SiEBERT in your work, please cite the following paper:
+
+> Hartmann, J., Heitmann, M., Siebert, C., & Schamp, C. (2023). More than a Feeling: Accuracy and Application of Sentiment Analysis. *International Journal of Research in Marketing*, 40(1), 75-87.
+
+```bibtex
+@article{hartmann2023,
+  title = {More than a Feeling: Accuracy and Application of Sentiment Analysis},
+  journal = {International Journal of Research in Marketing},
+  volume = {40},
+  number = {1},
+  pages = {75-87},
+  year = {2023},
+  doi = {https://doi.org/10.1016/j.ijresmar.2022.05.005},
+  url = {https://www.sciencedirect.com/science/article/pii/S0167811622000477},
+  author = {Jochen Hartmann and Mark Heitmann and Christian Siebert and Christina Schamp},
+}
+```
