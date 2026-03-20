@@ -1,15 +1,15 @@
-# Text Classification Pipeline
+# SiEBERT Pipeline
 
-Classify sentiment in English text using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english), a RoBERTa-based model trained on ~1.4M diverse texts.
+Streamlit app for classifying text sentiment as positive/negative using [SiEBERT](https://huggingface.co/siebert/sentiment-roberta-large-english) (RoBERTa-large, trained on ~1.4M diverse texts).
 
 ## Features
 
 - Upload a CSV or try built-in sample data
-- Auto-detects the text column; select any column to classify
+- Auto-detects text columns with manual override
 - Binary sentiment (positive/negative) with confidence scores
 - Summary metrics: total rows, positive/negative counts, average confidence
 - Results table with CSV download
-- Batched GPU/MPS/CPU inference
+- Batched GPU/MPS/CPU inference in float16
 - Handles empty, whitespace-only, and malformed input
 
 ## Setup
