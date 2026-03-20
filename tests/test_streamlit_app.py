@@ -4,7 +4,14 @@ import pandas as pd
 import pytest
 import torch
 
-from streamlit_app import BATCH_SIZE, get_device, process_dataframe
+from streamlit_app import (
+    BATCH_SIZE,
+    SAMPLE_DATA_PATH,
+    detect_text_column,
+    get_device,
+    load_model,
+    process_dataframe,
+)
 
 
 # --- BATCH_SIZE ---
@@ -19,8 +26,6 @@ def test_batch_size_is_positive_int():
 
 
 def test_sample_data_path_exists():
-    from streamlit_app import SAMPLE_DATA_PATH
-
     assert SAMPLE_DATA_PATH.exists()
     assert SAMPLE_DATA_PATH.suffix == ".csv"
 
@@ -53,28 +58,19 @@ class TestGetDevice:
 
 class TestDetectTextColumn:
     def test_returns_first_object_column(self):
-        from streamlit_app import detect_text_column
-
         df = pd.DataFrame({"id": [1, 2], "review": ["good", "bad"], "score": [5, 1]})
         assert detect_text_column(df) == "review"
 
     def test_skips_non_object_columns(self):
-        from streamlit_app import detect_text_column
-
         df = pd.DataFrame({"a": [1, 2], "b": [3.0, 4.0]})
         assert detect_text_column(df) is None
 
     def test_returns_first_when_multiple_object_columns(self):
-        from streamlit_app import detect_text_column
-
         df = pd.DataFrame({"name": ["Alice", "Bob"], "text": ["hi", "bye"]})
         assert detect_text_column(df) == "name"
 
     def test_returns_none_for_empty_dataframe(self):
-        from streamlit_app import detect_text_column
-
-        df = pd.DataFrame()
-        assert detect_text_column(df) is None
+        assert detect_text_column(pd.DataFrame()) is None
 
 
 # --- load_model ---
@@ -86,9 +82,6 @@ class TestLoadModel:
     @patch("streamlit_app.AutoModelForSequenceClassification")
     def test_loads_correct_model(self, mock_model_cls, mock_tok_cls):
         mock_tok_cls.from_pretrained.return_value = MagicMock()
-
-        from streamlit_app import load_model
-
         load_model.clear()
         load_model("cpu")
 
@@ -106,9 +99,6 @@ class TestLoadModel:
     @patch("streamlit_app.AutoModelForSequenceClassification")
     def test_loads_without_token(self, mock_model_cls, mock_tok_cls):
         mock_tok_cls.from_pretrained.return_value = MagicMock()
-
-        from streamlit_app import load_model
-
         load_model.clear()
         load_model("cpu")
 
@@ -128,12 +118,8 @@ class TestLoadModel:
         self, mock_model_cls, mock_tok_cls, mock_hf_logging
     ):
         mock_tok_cls.from_pretrained.return_value = MagicMock()
-
-        from streamlit_app import load_model
-
         load_model.clear()
         load_model("cpu")
-
         mock_hf_logging.set_verbosity_error.assert_called_once()
 
     @patch("streamlit_app.AutoTokenizer")
@@ -143,8 +129,6 @@ class TestLoadModel:
         mock_tokenizer = MagicMock()
         mock_model_cls.from_pretrained.return_value.to.return_value = mock_model
         mock_tok_cls.from_pretrained.return_value = mock_tokenizer
-
-        from streamlit_app import load_model
 
         load_model.clear()
         model, tokenizer = load_model("cpu")
@@ -157,213 +141,168 @@ class TestLoadModel:
 
 
 def _make_mock_tokenizer():
-    """Create a mock tokenizer for sequence classification."""
+    """Create a mock tokenizer whose inputs support .to(device)."""
     tokenizer = MagicMock()
-
     mock_inputs = MagicMock()
     mock_inputs.to.return_value = mock_inputs
     tokenizer.return_value = mock_inputs
-
     return tokenizer
 
 
 def _make_mock_model(sentiments):
-    """Create a mock model that returns logits for the given sentiments.
-
-    Args:
-        sentiments: list of "positive" or "negative" strings.
-            Each maps to logits where the higher value is at the correct index.
-    """
+    """Create a mock model returning logits for the given sentiment strings."""
     model = MagicMock()
     model.config.id2label = {0: "NEGATIVE", 1: "POSITIVE"}
 
-    # Build logits: NEGATIVE=index 0, POSITIVE=index 1
-    logits_rows = []
-    for s in sentiments:
-        if s == "positive":
-            logits_rows.append([0.0, 1.0])
-        else:
-            logits_rows.append([1.0, 0.0])
+    logits = [[0.0, 1.0] if s == "positive" else [1.0, 0.0] for s in sentiments]
 
     mock_output = MagicMock()
-    mock_output.logits = torch.tensor(logits_rows)
+    mock_output.logits = torch.tensor(logits)
     model.return_value = mock_output
-
     return model
 
 
 class TestProcessDataframe:
-    @patch("streamlit_app.st")
-    def test_adds_sentiment_column(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    @pytest.fixture(autouse=True)
+    def _mock_st(self):
+        with patch("streamlit_app.st") as mock_st:
+            self.mock_progress = MagicMock()
+            mock_st.progress.return_value = self.mock_progress
+            yield
+
+    def test_adds_sentiment_column(self):
         df = pd.DataFrame({"text": ["good product", "bad product"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive", "negative"])
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive", "negative"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
         assert "Sentiment" in result.columns
         assert len(result) == 2
 
-    @patch("streamlit_app.st")
-    def test_classifies_positive(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    def test_classifies_positive(self):
         df = pd.DataFrame({"text": ["great"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive"])
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
         assert result["Sentiment"].iloc[0] == "positive"
 
-    @patch("streamlit_app.st")
-    def test_classifies_negative(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    def test_classifies_negative(self):
         df = pd.DataFrame({"text": ["terrible"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["negative"])
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["negative"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
         assert result["Sentiment"].iloc[0] == "negative"
 
-    @patch("streamlit_app.st")
-    def test_maps_labels_to_lowercase(self, mock_st):
-        """Model returns uppercase labels; they should be lowercased."""
-        mock_st.progress.return_value = MagicMock()
+    def test_maps_labels_to_lowercase(self):
         df = pd.DataFrame({"text": ["great", "awful"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive", "negative"])
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive", "negative"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
         assert result["Sentiment"].iloc[0] == "positive"
         assert result["Sentiment"].iloc[1] == "negative"
 
-    @patch("streamlit_app.st")
-    def test_batching_multiple_batches(self, mock_st):
-        """Texts exceeding BATCH_SIZE should be split into multiple batches."""
-        mock_st.progress.return_value = MagicMock()
+    def test_batching_multiple_batches(self):
         n = BATCH_SIZE + 3
         df = pd.DataFrame({"text": [f"review {i}" for i in range(n)]})
 
         model = MagicMock()
         model.config.id2label = {0: "NEGATIVE", 1: "POSITIVE"}
 
-        # First call: full batch, second call: remaining 3
         batch1_output = MagicMock()
         batch1_output.logits = torch.tensor([[0.0, 1.0]] * BATCH_SIZE)
         batch2_output = MagicMock()
         batch2_output.logits = torch.tensor([[0.0, 1.0]] * 3)
         model.side_effect = [batch1_output, batch2_output]
 
-        tokenizer = _make_mock_tokenizer()
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
+        result = process_dataframe(df, "text", model, _make_mock_tokenizer(), "cpu")
 
         assert len(result) == n
         assert model.call_count == 2
 
-    @patch("streamlit_app.st")
-    def test_progress_bar_reaches_completion(self, mock_st):
-        mock_progress = MagicMock()
-        mock_st.progress.return_value = mock_progress
+    def test_progress_bar_reaches_completion(self):
         df = pd.DataFrame({"text": ["review"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive"])
-
-        process_dataframe(df, "text", model, tokenizer, "cpu")
-
-        last_call_arg = mock_progress.progress.call_args_list[-1][0][0]
+        process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
+        last_call_arg = self.mock_progress.progress.call_args_list[-1][0][0]
         assert last_call_arg == pytest.approx(1.0)
 
-    @patch("streamlit_app.st")
-    def test_uses_correct_text_column(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    def test_uses_correct_text_column(self):
         df = pd.DataFrame({"col_a": ["ignore"], "col_b": ["use this"]})
         tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive"])
+        process_dataframe(df, "col_b", _make_mock_model(["positive"]), tokenizer, "cpu")
+        assert "use this" in tokenizer.call_args[0][0]
 
-        process_dataframe(df, "col_b", model, tokenizer, "cpu")
-
-        # Tokenizer should be called with the text from col_b
-        call_args = tokenizer.call_args
-        assert "use this" in call_args[0][0]
-
-    @patch("streamlit_app.st")
-    def test_uses_inference_mode(self, mock_st):
-        """Verify torch.inference_mode is used (not no_grad)."""
-        mock_st.progress.return_value = MagicMock()
+    def test_uses_inference_mode(self):
         df = pd.DataFrame({"text": ["test"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive"])
-
         with patch("streamlit_app.torch.inference_mode") as mock_inf:
             mock_inf.return_value.__enter__ = MagicMock()
             mock_inf.return_value.__exit__ = MagicMock(return_value=False)
-            process_dataframe(df, "text", model, tokenizer, "cpu")
+            process_dataframe(
+                df,
+                "text",
+                _make_mock_model(["positive"]),
+                _make_mock_tokenizer(),
+                "cpu",
+            )
             mock_inf.assert_called_once()
 
-    @patch("streamlit_app.st")
-    def test_does_not_mutate_input_dataframe(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    def test_does_not_mutate_input_dataframe(self):
         df = pd.DataFrame({"text": ["review"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive"])
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
         assert "Sentiment" not in df.columns
         assert "Sentiment" in result.columns
 
-    @patch("streamlit_app.st")
-    def test_handles_empty_dataframe(self, mock_st):
-        mock_progress = MagicMock()
-        mock_st.progress.return_value = mock_progress
+    def test_handles_empty_dataframe(self):
         df = pd.DataFrame({"text": []})
         model = MagicMock()
-        tokenizer = MagicMock()
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
+        result = process_dataframe(df, "text", model, MagicMock(), "cpu")
 
         assert "Sentiment" in result.columns
         assert "Confidence" in result.columns
         assert len(result) == 0
         model.assert_not_called()
-        mock_progress.progress.assert_called_once_with(1.0)
+        self.mock_progress.progress.assert_called_once_with(1.0)
 
-    @patch("streamlit_app.st")
-    def test_tokenizer_called_with_truncation(self, mock_st):
-        """Tokenizer should use truncation=True for RoBERTa's 512 token limit."""
-        mock_st.progress.return_value = MagicMock()
+    def test_tokenizer_called_with_truncation(self):
         df = pd.DataFrame({"text": ["a review"]})
         tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive"])
+        process_dataframe(df, "text", _make_mock_model(["positive"]), tokenizer, "cpu")
+        assert tokenizer.call_args[1]["truncation"] is True
 
-        process_dataframe(df, "text", model, tokenizer, "cpu")
-
-        call_kwargs = tokenizer.call_args[1]
-        assert call_kwargs["truncation"] is True
-
-    @patch("streamlit_app.st")
-    def test_tokenizer_called_with_padding(self, mock_st):
-        """Tokenizer should use padding=True for batched inputs."""
-        mock_st.progress.return_value = MagicMock()
+    def test_tokenizer_called_with_padding(self):
         df = pd.DataFrame({"text": ["a review"]})
         tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive"])
+        process_dataframe(df, "text", _make_mock_model(["positive"]), tokenizer, "cpu")
+        assert tokenizer.call_args[1]["padding"] is True
 
-        process_dataframe(df, "text", model, tokenizer, "cpu")
-
-        call_kwargs = tokenizer.call_args[1]
-        assert call_kwargs["padding"] is True
-
-    @patch("streamlit_app.st")
-    def test_uses_id2label_mapping(self, mock_st):
-        """Labels should come from model.config.id2label."""
-        mock_st.progress.return_value = MagicMock()
+    def test_uses_id2label_mapping(self):
         df = pd.DataFrame({"text": ["review"]})
-        tokenizer = _make_mock_tokenizer()
 
         model = MagicMock()
         model.config.id2label = {0: "NEGATIVE", 1: "POSITIVE"}
@@ -371,66 +310,60 @@ class TestProcessDataframe:
         mock_output.logits = torch.tensor([[0.0, 1.0]])
         model.return_value = mock_output
 
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(df, "text", model, _make_mock_tokenizer(), "cpu")
         assert result["Sentiment"].iloc[0] == "positive"
 
-    @patch("streamlit_app.st")
-    def test_adds_confidence_column(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    def test_adds_confidence_column(self):
         df = pd.DataFrame({"text": ["good product", "bad product"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive", "negative"])
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive", "negative"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
         assert "Confidence" in result.columns
         assert len(result["Confidence"]) == 2
         for val in result["Confidence"]:
             assert 0.0 <= val <= 1.0
 
-    @patch("streamlit_app.st")
-    def test_handles_all_blank_texts(self, mock_st):
-        mock_progress = MagicMock()
-        mock_st.progress.return_value = mock_progress
+    def test_handles_all_blank_texts(self):
         df = pd.DataFrame({"text": ["", "  ", "\t"]})
         model = MagicMock()
-        tokenizer = MagicMock()
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
+        result = process_dataframe(df, "text", model, MagicMock(), "cpu")
 
         assert len(result) == 3
         assert all(s == "" for s in result["Sentiment"])
         assert all(c == 0.0 for c in result["Confidence"])
         model.assert_not_called()
-        mock_progress.progress.assert_called_once_with(1.0)
+        self.mock_progress.progress.assert_called_once_with(1.0)
 
-    @patch("streamlit_app.st")
-    def test_handles_mixed_blank_text(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    def test_handles_mixed_blank_text(self):
         df = pd.DataFrame({"text": ["good product", "", "  ", "bad product"]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(["positive", "negative"])
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(["positive", "negative"]),
+            _make_mock_tokenizer(),
+            "cpu",
+        )
+        assert result["Sentiment"].iloc[0] == "positive"
         assert result["Sentiment"].iloc[1] == ""
         assert result["Confidence"].iloc[1] == 0.0
         assert result["Sentiment"].iloc[2] == ""
         assert result["Confidence"].iloc[2] == 0.0
-        assert result["Sentiment"].iloc[0] == "positive"
         assert result["Sentiment"].iloc[3] == "negative"
 
-    @patch("streamlit_app.st")
-    def test_confidence_values_in_valid_range(self, mock_st):
-        mock_st.progress.return_value = MagicMock()
+    def test_confidence_values_in_valid_range(self):
         df = pd.DataFrame({"text": [f"text {i}" for i in range(5)]})
-        tokenizer = _make_mock_tokenizer()
-        model = _make_mock_model(
-            ["positive", "negative", "positive", "negative", "positive"]
+        result = process_dataframe(
+            df,
+            "text",
+            _make_mock_model(
+                ["positive", "negative", "positive", "negative", "positive"]
+            ),
+            _make_mock_tokenizer(),
+            "cpu",
         )
-
-        result = process_dataframe(df, "text", model, tokenizer, "cpu")
-
         for val in result["Confidence"]:
             assert 0.0 <= val <= 1.0
