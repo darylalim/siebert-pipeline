@@ -4,10 +4,11 @@ version = "0.5.0"
 description = "Streamlit app for classifying text sentiment using SiEBERT"
 requires-python = ">=3.12"
 dependencies = [
+    "mlx",
+    "mlx-transformers",
     "python-dotenv",
     "pandas",
     "streamlit",
-    "torch",
     "transformers",
 ]
 
