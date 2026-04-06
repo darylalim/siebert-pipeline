@@ -1718,6 +1718,10 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+convert = [
+    { name = "safetensors" },
+    { name = "torch" },
+]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -1735,6 +1739,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+convert = [
+    { name = "safetensors" },
+    { name = "torch" },
+]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
