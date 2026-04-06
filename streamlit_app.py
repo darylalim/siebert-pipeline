@@ -1,12 +1,13 @@
 import os
 from pathlib import Path
 
+import mlx.core as mx
 import pandas as pd
 import streamlit as st
-import torch
 from dotenv import load_dotenv
+from mlx_transformers.models import RobertaForSequenceClassification
 from transformers import (
-    AutoModelForSequenceClassification,
+    AutoConfig,
     AutoTokenizer,
     logging as hf_logging,
 )
@@ -17,30 +18,24 @@ BATCH_SIZE = 8
 SAMPLE_DATA_PATH = Path(__file__).parent / "tests" / "data" / "csv" / "mixed_sample.csv"
 
 
-def get_device():
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cuda" if torch.cuda.is_available() else "cpu"
-
-
 def detect_text_column(df: pd.DataFrame) -> str | None:
     return next((col for col in df.columns if df[col].dtype == "object"), None)
 
 
 @st.cache_resource
-def load_model(device):
+def load_model():
     """Load model and tokenizer once via @st.cache_resource in float16."""
     model_path = "siebert/sentiment-roberta-large-english"
     token = os.environ.get("HF_TOKEN")
     hf_logging.set_verbosity_error()
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_path, dtype=torch.float16, token=token
-    ).to(device)
+    config = AutoConfig.from_pretrained(model_path, token=token)
+    model = RobertaForSequenceClassification(config)
+    model.from_pretrained(model_path, float16=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, token=token)
     return model, tokenizer
 
 
-def process_dataframe(df, text_column, model, tokenizer, device):
+def process_dataframe(df, text_column, model, tokenizer):
     """Classify texts in batches; returns a copy with Sentiment and Confidence columns."""
     texts = df[text_column].astype(str).tolist()
     sentiments = [""] * len(texts)
@@ -60,14 +55,16 @@ def process_dataframe(df, text_column, model, tokenizer, device):
             end = min(start + BATCH_SIZE, total)
             inputs = tokenizer(
                 list(valid_texts[start:end]),
-                return_tensors="pt",
+                return_tensors="np",
                 padding=True,
                 truncation=True,
-            ).to(device)
+            )
+            inputs = {k: mx.array(v) for k, v in inputs.items()}
 
-            with torch.inference_mode():
-                probs = torch.softmax(model(**inputs).logits, dim=-1)
-                max_probs, preds = probs.max(dim=-1)
+            probs = mx.softmax(model(**inputs).logits, axis=-1)
+            max_probs = mx.max(probs, axis=-1)
+            preds = mx.argmax(probs, axis=-1)
+            mx.eval(max_probs, preds)
 
             for idx, pred, conf in zip(
                 indices[start:end], preds.tolist(), max_probs.tolist()
@@ -89,14 +86,12 @@ st.set_page_config(
     layout="wide",
 )
 
-device = get_device()
-
-with st.spinner(f"Loading model on {device.upper()}..."):
-    model, tokenizer = load_model(device)
+with st.spinner("Loading model..."):
+    model, tokenizer = load_model()
 
 st.title("Text Classification Pipeline")
 st.write("Classify the sentiment of text in your CSV as positive or negative.")
-st.caption(f"Powered by SiEBERT (RoBERTa-large) · Running on {device.upper()}")
+st.caption("Powered by SiEBERT (RoBERTa-large) · Running on MLX (Apple Silicon)")
 
 col_upload, col_sample = st.columns(2)
 with col_upload:
@@ -153,7 +148,7 @@ if df is not None:
 
         if classify_clicked:
             with st.spinner("Classifying..."):
-                result_df = process_dataframe(df, text_column, model, tokenizer, device)
+                result_df = process_dataframe(df, text_column, model, tokenizer)
 
             csv_data = result_df.to_csv(index=False)
 
