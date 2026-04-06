@@ -9,7 +9,7 @@ Streamlit app for classifying text sentiment as positive/negative using [SiEBERT
 - Binary sentiment (positive/negative) with confidence scores
 - Summary metrics: total rows, positive/negative counts, average confidence
 - Results table with CSV download
-- Batched GPU/MPS/CPU inference in float16
+- Batched MLX inference in float16 on Apple Silicon
 - Handles empty, whitespace-only, and malformed input
 
 ## Setup

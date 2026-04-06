@@ -34,12 +34,13 @@ Use `ruff` for all linting and formatting. Run `uv run ruff check --fix .` to au
 
 ## Architecture
 
-Single-file application (`streamlit_app.py`, ~185 lines):
+Single-file application (`streamlit_app.py`, ~205 lines):
 
 1. **`detect_text_column`** — returns first string-dtype column name via `next()` generator
-2. **`load_model`** — loads config via `AutoConfig`, constructs `RobertaForSequenceClassification`, loads weights via `from_pretrained` with `float16=True`; cached with `@st.cache_resource`; authenticates with `HF_TOKEN`
-3. **`process_dataframe`** — pre-filters blanks, batches valid texts (`BATCH_SIZE=8`), tokenizes with `return_tensors="np"` and converts to `mx.array`, classifies via softmax over logits; uses `.tolist()` for batch conversion
-4. **UI** — guided step-by-step flow: file upload or sample data → column auto-detect and preview → classify → summary metrics → results table → CSV download
+2. **`_ensure_safetensors`** — downloads model via `snapshot_download` (prefers `model.safetensors`, falls back to `pytorch_model.bin`), converts to safetensors if needed; `torch` and `safetensors` are lazy-imported only when conversion is required
+3. **`load_model`** — loads config via `AutoConfig`, constructs `RobertaForSequenceClassification`, loads weights via `from_pretrained` with `float16=True`; cached with `@st.cache_resource`; authenticates with `HF_TOKEN`
+4. **`process_dataframe`** — pre-filters blanks, batches valid texts (`BATCH_SIZE=8`), tokenizes with `return_tensors="np"` and converts to `mx.array`, classifies via softmax over logits; uses `.tolist()` for batch conversion
+5. **UI** — guided step-by-step flow: file upload or sample data → column auto-detect and preview → classify → summary metrics → results table → CSV download
 
 ## Key Patterns
 
@@ -57,8 +58,8 @@ Single-file application (`streamlit_app.py`, ~185 lines):
 
 ## Tests
 
-- `tests/conftest.py` — module-level patch for `RobertaForSequenceClassification` to prevent model downloads during test collection
-- `tests/test_streamlit_app.py` — unit tests for `detect_text_column`, `load_model`, `process_dataframe`, `BATCH_SIZE`, and `SAMPLE_DATA_PATH`; uses `autouse` fixture for Streamlit mock and mocked model/tokenizer throughout
+- `tests/conftest.py` — module-level patches for `RobertaForSequenceClassification`, `snapshot_download`, `torch.load`, and `safetensors.torch.save_file` to prevent model downloads and weight conversion during test collection
+- `tests/test_streamlit_app.py` — unit tests for `detect_text_column`, `_ensure_safetensors`, `load_model`, `process_dataframe`, `BATCH_SIZE`, and `SAMPLE_DATA_PATH`; uses `autouse` fixture for Streamlit mock and mocked model/tokenizer throughout
 - `tests/data/csv/product_reviews.csv` — 40 e-commerce product reviews
 - `tests/data/csv/movie_reviews.csv` — 40 film and TV opinions
 - `tests/data/csv/social_media.csv` — 40 tweets and social media posts
