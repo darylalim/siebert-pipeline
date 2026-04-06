@@ -7,6 +7,7 @@ import pytest
 from streamlit_app import (
     BATCH_SIZE,
     SAMPLE_DATA_PATH,
+    _ensure_safetensors,
     detect_text_column,
     load_model,
     process_dataframe,
@@ -52,12 +53,59 @@ class TestDetectTextColumn:
 # --- load_model ---
 
 
+class TestEnsureSafetensors:
+    @patch("safetensors.torch.save_file")
+    @patch("torch.load", return_value={"weight": "data"})
+    @patch("streamlit_app.snapshot_download")
+    def test_converts_when_safetensors_missing(
+        self, mock_download, mock_torch_load, mock_save, tmp_path
+    ):
+        pt_path = tmp_path / "pytorch_model.bin"
+        pt_path.touch()
+        mock_download.return_value = str(tmp_path)
+
+        result = _ensure_safetensors("model/name", "token")
+
+        assert result == tmp_path
+        mock_torch_load.assert_called_once_with(
+            pt_path, map_location="cpu", weights_only=True
+        )
+        mock_save.assert_called_once_with(
+            {"weight": "data"}, tmp_path / "model.safetensors"
+        )
+
+    @patch("streamlit_app.snapshot_download")
+    def test_skips_conversion_when_safetensors_exists(self, mock_download, tmp_path):
+        (tmp_path / "model.safetensors").touch()
+        mock_download.return_value = str(tmp_path)
+
+        result = _ensure_safetensors("model/name", "token")
+
+        assert result == tmp_path
+
+    @patch("streamlit_app.snapshot_download")
+    def test_passes_token_to_snapshot_download(self, mock_download, tmp_path):
+        (tmp_path / "model.safetensors").touch()
+        mock_download.return_value = str(tmp_path)
+
+        _ensure_safetensors("model/name", "my-token")
+
+        mock_download.assert_called_once_with(
+            repo_id="model/name",
+            allow_patterns=["model.safetensors", "pytorch_model.bin", "config.json"],
+            token="my-token",
+        )
+
+
 class TestLoadModel:
     @patch.dict("os.environ", {"HF_TOKEN": "test-token"})
+    @patch("streamlit_app._ensure_safetensors", return_value="/fake/local/dir")
     @patch("streamlit_app.AutoTokenizer")
     @patch("streamlit_app.AutoConfig")
     @patch("streamlit_app.RobertaForSequenceClassification")
-    def test_loads_correct_model(self, mock_model_cls, mock_config_cls, mock_tok_cls):
+    def test_loads_correct_model(
+        self, mock_model_cls, mock_config_cls, mock_tok_cls, mock_ensure
+    ):
         mock_tok_cls.from_pretrained.return_value = MagicMock()
         load_model.clear()
         load_model()
@@ -66,11 +114,14 @@ class TestLoadModel:
             "siebert/sentiment-roberta-large-english",
             token="test-token",
         )
+        mock_ensure.assert_called_once_with(
+            "siebert/sentiment-roberta-large-english", "test-token"
+        )
         mock_model_cls.assert_called_once_with(
             mock_config_cls.from_pretrained.return_value
         )
         mock_model_cls.return_value.from_pretrained.assert_called_once_with(
-            "siebert/sentiment-roberta-large-english",
+            "/fake/local/dir",
             float16=True,
         )
         mock_tok_cls.from_pretrained.assert_called_once_with(
@@ -78,10 +129,13 @@ class TestLoadModel:
         )
 
     @patch.dict("os.environ", {}, clear=True)
+    @patch("streamlit_app._ensure_safetensors", return_value="/fake/local/dir")
     @patch("streamlit_app.AutoTokenizer")
     @patch("streamlit_app.AutoConfig")
     @patch("streamlit_app.RobertaForSequenceClassification")
-    def test_loads_without_token(self, mock_model_cls, mock_config_cls, mock_tok_cls):
+    def test_loads_without_token(
+        self, mock_model_cls, mock_config_cls, mock_tok_cls, mock_ensure
+    ):
         mock_tok_cls.from_pretrained.return_value = MagicMock()
         load_model.clear()
         load_model()
@@ -90,27 +144,37 @@ class TestLoadModel:
             "siebert/sentiment-roberta-large-english",
             token=None,
         )
+        mock_ensure.assert_called_once_with(
+            "siebert/sentiment-roberta-large-english", None
+        )
         mock_tok_cls.from_pretrained.assert_called_once_with(
             "siebert/sentiment-roberta-large-english", token=None
         )
 
+    @patch("streamlit_app._ensure_safetensors", return_value="/fake/local/dir")
     @patch("streamlit_app.hf_logging")
     @patch("streamlit_app.AutoTokenizer")
     @patch("streamlit_app.AutoConfig")
     @patch("streamlit_app.RobertaForSequenceClassification")
     def test_suppresses_hf_warnings(
-        self, mock_model_cls, mock_config_cls, mock_tok_cls, mock_hf_logging
+        self,
+        mock_model_cls,
+        mock_config_cls,
+        mock_tok_cls,
+        mock_hf_logging,
+        mock_ensure,
     ):
         mock_tok_cls.from_pretrained.return_value = MagicMock()
         load_model.clear()
         load_model()
         mock_hf_logging.set_verbosity_error.assert_called_once()
 
+    @patch("streamlit_app._ensure_safetensors", return_value="/fake/local/dir")
     @patch("streamlit_app.AutoTokenizer")
     @patch("streamlit_app.AutoConfig")
     @patch("streamlit_app.RobertaForSequenceClassification")
     def test_returns_model_and_tokenizer(
-        self, mock_model_cls, mock_config_cls, mock_tok_cls
+        self, mock_model_cls, mock_config_cls, mock_tok_cls, mock_ensure
     ):
         mock_model = MagicMock()
         mock_tokenizer = MagicMock()

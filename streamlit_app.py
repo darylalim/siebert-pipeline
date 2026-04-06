@@ -5,6 +5,7 @@ import mlx.core as mx
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
+from huggingface_hub import snapshot_download
 from mlx_transformers.models import RobertaForSequenceClassification
 from transformers import (
     AutoConfig,
@@ -22,6 +23,27 @@ def detect_text_column(df: pd.DataFrame) -> str | None:
     return next((col for col in df.columns if df[col].dtype == "object"), None)
 
 
+def _ensure_safetensors(model_path: str, token: str | None) -> Path:
+    """Download model and convert pytorch_model.bin to safetensors if needed."""
+    local_dir = Path(
+        snapshot_download(
+            repo_id=model_path,
+            allow_patterns=["model.safetensors", "pytorch_model.bin", "config.json"],
+            token=token,
+        )
+    )
+    safetensors_path = local_dir / "model.safetensors"
+    if not safetensors_path.exists():
+        import torch
+        from safetensors.torch import save_file
+
+        pt_weights = torch.load(
+            local_dir / "pytorch_model.bin", map_location="cpu", weights_only=True
+        )
+        save_file(pt_weights, safetensors_path)
+    return local_dir
+
+
 @st.cache_resource
 def load_model():
     """Load model and tokenizer once via @st.cache_resource in float16."""
@@ -29,8 +51,9 @@ def load_model():
     token = os.environ.get("HF_TOKEN")
     hf_logging.set_verbosity_error()
     config = AutoConfig.from_pretrained(model_path, token=token)
+    local_dir = _ensure_safetensors(model_path, token)
     model = RobertaForSequenceClassification(config)
-    model.from_pretrained(model_path, float16=True)
+    model.from_pretrained(str(local_dir), float16=True)
     tokenizer = AutoTokenizer.from_pretrained(model_path, token=token)
     return model, tokenizer
 
@@ -135,7 +158,7 @@ if df is not None:
         )
 
         st.write("Preview of selected column")
-        st.dataframe(df[[text_column]].head(), width="stretch")
+        st.dataframe(df[[text_column]].head(), use_container_width=True)
 
         col_classify, col_reset = st.columns([1, 1])
         with col_classify:
@@ -173,7 +196,7 @@ if df is not None:
                 m3.metric("Negative", f"{neg_count} ({neg_count / total * 100:.0f}%)")
                 m4.metric("Avg confidence", f"{avg_conf:.1%}")
 
-                st.dataframe(result_df, width="stretch")
+                st.dataframe(result_df, use_container_width=True)
 
             st.download_button(
                 label="Download results as CSV",
