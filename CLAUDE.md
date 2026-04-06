@@ -36,19 +36,18 @@ Use `ruff` for all linting and formatting. Run `uv run ruff check --fix .` to au
 
 Single-file application (`streamlit_app.py`, ~185 lines):
 
-1. **`get_device`** — selects MPS, CUDA, or CPU
-2. **`detect_text_column`** — returns first string-dtype column name via `next()` generator
-3. **`load_model`** — loads model/tokenizer once via `@st.cache_resource` in float16; authenticates with `HF_TOKEN`
-4. **`process_dataframe`** — pre-filters blanks, batches valid texts (`BATCH_SIZE=8`), classifies via softmax over logits; uses `.tolist()` for batch tensor-to-Python conversion
-5. **UI** — guided step-by-step flow: file upload or sample data → column auto-detect and preview → classify → summary metrics → results table → CSV download
+1. **`detect_text_column`** — returns first string-dtype column name via `next()` generator
+2. **`load_model`** — loads config via `AutoConfig`, constructs `RobertaForSequenceClassification`, loads weights via `from_pretrained` with `float16=True`; cached with `@st.cache_resource`; authenticates with `HF_TOKEN`
+3. **`process_dataframe`** — pre-filters blanks, batches valid texts (`BATCH_SIZE=8`), tokenizes with `return_tensors="np"` and converts to `mx.array`, classifies via softmax over logits; uses `.tolist()` for batch conversion
+4. **UI** — guided step-by-step flow: file upload or sample data → column auto-detect and preview → classify → summary metrics → results table → CSV download
 
 ## Key Patterns
 
-- `torch.inference_mode()` for all inference
+- MLX for all inference on Apple Silicon (no device management needed)
 - `hf_logging.set_verbosity_error()` suppresses expected checkpoint warnings
-- Confidence via `torch.softmax(logits, dim=-1).max(dim=-1)`; labels from `model.config.id2label`
+- Confidence via `mx.softmax(logits, axis=-1)` with `mx.max` and `mx.argmax`; `mx.eval()` before `.tolist()`; labels from `model.config.id2label`
 - Empty/whitespace-only texts skipped; get sentiment `""` and confidence `0.0`
-- Tokenizer uses `truncation=True` (512 token limit) and `padding=True`
+- Tokenizer uses `return_tensors="np"` converted to `mx.array`, with `truncation=True` (512 token limit) and `padding=True`
 - `process_dataframe` returns a copy; input DataFrame is not mutated
 - `st.session_state` persists loaded DataFrame across Streamlit reruns (buttons reset on rerun)
 - Walrus operator (`:=`) in UI guards to combine detect + check into one `elif`
@@ -58,7 +57,8 @@ Single-file application (`streamlit_app.py`, ~185 lines):
 
 ## Tests
 
-- `tests/test_streamlit_app.py` — unit tests for `get_device`, `detect_text_column`, `load_model`, `process_dataframe`, `BATCH_SIZE`, and `SAMPLE_DATA_PATH`; uses `autouse` fixture for Streamlit mock and mocked model/tokenizer throughout
+- `tests/conftest.py` — module-level patch for `RobertaForSequenceClassification` to prevent model downloads during test collection
+- `tests/test_streamlit_app.py` — unit tests for `detect_text_column`, `load_model`, `process_dataframe`, `BATCH_SIZE`, and `SAMPLE_DATA_PATH`; uses `autouse` fixture for Streamlit mock and mocked model/tokenizer throughout
 - `tests/data/csv/product_reviews.csv` — 40 e-commerce product reviews
 - `tests/data/csv/movie_reviews.csv` — 40 film and TV opinions
 - `tests/data/csv/social_media.csv` — 40 tweets and social media posts
